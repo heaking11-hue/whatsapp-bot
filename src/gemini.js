@@ -1,57 +1,124 @@
 const axios = require('axios');
 
-// بنقرا المفتاح من متغيرات البيئة (اللي ضفتها في HostingGuru)
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const GEMINI_URL =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+// نظام المحاولات المتعددة
+async function callGemini(apiKey, requestBody, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await axios.post(
+        `${GEMINI_URL}?key=${apiKey}`,
+        requestBody,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 25000
+        }
+      );
+      return response.data;
+    } catch (err) {
+      const status = err.response?.status;
+      console.error(`Gemini attempt ${i+1} failed: ${status} - ${err.message}`);
+      // لو خطأ 429 (rate limit) أو 503، انتظر وحاول تاني
+      if ((status === 429 || status === 503 || !status) && i < retries - 1) {
+        await new Promise(r => setTimeout(r, (i + 1) * 2000));
+        continue;
+      }
+      // لو خطأ تاني، ارمي الخطأ
+      throw err;
+    }
+  }
+}
 
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    return { reply: 'الخدمة غير متاحة حالياً.', videos: [] };
+  }
+
+  // قائمة الفيديوهات
   const videoList = videos.length === 0
     ? 'No videos available.'
-    : videos.map(v => `ID:${v._id} | Title:${v.title} | Keywords:${v.keywords}`).join('\n');
+    : videos.map(v =>
+        `ID:${v._id} | Title:${v.title} | Keywords:${v.keywords}`
+      ).join('\n');
 
   const fullPrompt = `${systemPrompt}
 
-=== Contact Info ===
+=== معلومات الشخص المتحدث ===
 ${contactContext}
 
-=== Your Video Library ===
+=== مكتبة الفيديوهات ===
 ${videoList}
 
-=== Instructions ===
-- Reply naturally as the account owner, never mention AI
-- Reply in the same language they use
-- If one or more videos from the library fit their question, list them at the end like this:
-  [VIDEO:id1]
-  [VIDEO:id2]
-  (each video on a separate line, in the order you want to send them)
-- If no video fits, do not mention VIDEO at all
-- Keep replies concise and human
+=== تعليمات مهمة ===
+- رد كأنك أنت صاحب الحساب بالظبط، بشكل طبيعي وبسيط
+- لا تذكر أبداً أنك ذكاء اصطناعي أو بوت أو برنامج
+- رد بنفس لغة الشخص
+- لو فيديو من المكتبة يناسب السؤال، ضيف في نهاية ردك: [VIDEO:id]
+- لو أكثر من فيديو يناسب، ضيفهم كلهم: [VIDEO:id1] [VIDEO:id2]
+- لو مفيش فيديو مناسب، متذكرش VIDEO خالص
+- الرد يكون مختصر وطبيعي
 
-=== Their Message ===
+=== رسالة الشخص ===
 ${message}`;
 
-  const messages = [{ role: 'user', content: fullPrompt }];
+  const parts = [];
+
+  // لو في صورة
+  if (imageUrl) {
+    try {
+      const imgResp = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`
+        }
+      });
+      const base64   = Buffer.from(imgResp.data).toString('base64');
+      const mimeType = imgResp.headers['content-type'] || 'image/jpeg';
+      parts.push({ inlineData: { mimeType, data: base64 } });
+    } catch (e) {
+      console.error('Image fetch error:', e.message);
+    }
+  }
+  parts.push({ text: fullPrompt });
+
+  const requestBody = {
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      maxOutputTokens: 500,
+      temperature: 0.7,
+      topP: 0.8,
+      topK: 40
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
+  };
 
   try {
-    const response = await axios.post(
-      OPENAI_URL,
-      {
-        model: 'gpt-4o-mini',
-        messages,
-        max_tokens: 600,
-        temperature: 0.85
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
-      }
-    );
+    const data = await callGemini(apiKey, requestBody);
+    
+    // تأكد إن الرد موجود
+    const candidate = data?.candidates?.[0];
+    if (!candidate || candidate.finishReason === 'SAFETY') {
+      return {
+        reply: 'آسف، ما قدرتش أفهم رسالتك. ممكن توضح أكثر؟',
+        videos: []
+      };
+    }
 
-    const fullText = response.data.choices[0].message.content.trim();
+    const fullText = candidate.content?.parts?.[0]?.text?.trim() || '';
+    if (!fullText) {
+      return { reply: 'حاول تاني من فضلك.', videos: [] };
+    }
 
+    // استخرج الفيديوهات المختارة
     const videoRegex   = /\[VIDEO:([^\]]+)\]/g;
     const videoIds     = [];
     let match;
@@ -67,9 +134,10 @@ ${message}`;
     return { reply: cleanReply, videos: selectedVideos };
 
   } catch (error) {
-    console.error('OpenAI error:', error.response?.data || error.message);
+    console.error('Gemini final error:', error.message);
+    // رسالة خطأ طبيعية بدون ذكر تقني
     return {
-      reply: '⚠️ عذراً، حدث خطأ مؤقت. جرب مرة أخرى.',
+      reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
       videos: []
     };
   }
