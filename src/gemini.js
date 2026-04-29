@@ -1,91 +1,80 @@
-const axios = require('axios');
+const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
+const config = require('./config');
 
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+// إعداد الذكاء الاصطناعي مع إيقاف فلاتر الحظر المزعجة
+const genAI = new GoogleGenerativeAI(config.GEMINI_KEY);
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    ]
+});
 
-async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  const videoList = videos.length === 0
-    ? 'No videos available.'
-    : videos.map(v =>
-        `ID:${v._id} | Title:${v.title} | Keywords:${v.keywords}`
-      ).join('\n');
-
-  const fullPrompt = `${systemPrompt}
-
-=== Contact Info ===
-${contactContext}
-
-=== Your Video Library ===
-${videoList}
-
-=== Instructions ===
-- Reply naturally as the account owner, never mention AI
-- Reply in the same language they use
-- If one or more videos from the library fit their question, list them at the end like this:
-  [VIDEO:id1]
-  [VIDEO:id2]
-  [VIDEO:id3]
-  (each video on a separate line, in the order you want to send them)
-- If no video fits, do not mention VIDEO at all
-- Keep replies concise and human
-
-=== Their Message ===
-${message}`;
-
-  const parts = [];
-
-  if (imageUrl) {
-    try {
-      const imgResp = await axios.get(imageUrl, {
-        responseType: 'arraybuffer',
-        timeout: 15000
-      });
-      const base64   = Buffer.from(imgResp.data).toString('base64');
-      const mimeType = imgResp.headers['content-type'] || 'image/jpeg';
-      parts.push({ inlineData: { mimeType, data: base64 } });
-    } catch (e) {
-      console.error('Image fetch error:', e.message);
+// دالة المحاولة التلقائية (بتحاول 3 مرات قبل ما تستسلم)
+async function getGeminiReplyWithRetry(userContent, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const result = await model.generateContent(userContent);
+            return result.response.text();
+        } catch (error) {
+            console.log(`[تحذير] فشل المحاولة ${i + 1} مع Gemini:`, error.message);
+            if (i === retries - 1) {
+                throw error; // لو دي آخر محاولة، ارمي الخطأ
+            }
+            // استنى ثانيتين قبل ما تجرب تاني
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
     }
-  }
-  parts.push({ text: fullPrompt });
-
-  try {
-    const response = await axios.post(
-      `${GEMINI_URL}?key=${apiKey}`,
-      {
-        contents: [{ role: 'user', parts }],
-        generationConfig: { maxOutputTokens: 800, temperature: 0.85 }
-      },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
-    );
-
-    const fullText =
-      response.data.candidates[0].content.parts[0].text.trim();
-
-    const videoRegex   = /\[VIDEO:([^\]]+)\]/g;
-    const videoIds     = [];
-    let match;
-    while ((match = videoRegex.exec(fullText)) !== null) {
-      videoIds.push(match[1].trim());
-    }
-
-    const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
-
-    const selectedVideos = videoIds
-      .map(id => videos.find(v => v._id.toString() === id))
-      .filter(Boolean);
-
-    return { reply: cleanReply, videos: selectedVideos };
-
-  } catch (error) {
-    console.error('Gemini error:', error.response?.data || error.message);
-    return {
-      reply: 'آسف، حدث خطأ مؤقت. ممكن تعيد رسالتك؟',
-      videos: []
-    };
-  }
 }
 
-module.exports = { getReply };
+async function startAgent() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const sock = makeWASocket({ auth: state, printQRInTerminal: true });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+
+        const sender = msg.key.remoteJid;
+        if (msg.key.participant) return; // تجاهل الجروبات أو الأرقام المتسجلة
+
+        let userContent = [];
+        
+        if (msg.message.imageMessage) {
+            const buffer = await downloadMediaMessage(msg, 'buffer', {});
+            userContent.push({ inlineData: { data: buffer.toString("base64"), mimeType: "image/jpeg" } });
+            userContent.push(config.SYSTEM_PROMPT + " الزبون أرسل هذه الصورة.");
+        } else {
+            const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+            if (!text) return;
+            userContent.push(config.SYSTEM_PROMPT + "\nرسالة الزبون: " + text);
+        }
+
+        try {
+            // استخدام دالة المحاولة التلقائية بدلاً من الاستدعاء المباشر
+            const responseText = await getGeminiReplyWithRetry(userContent);
+
+            await sock.sendMessage(sender, { text: responseText });
+
+            // كود إرسال الفيديو (مثال)
+            if (responseText.includes("120m")) {
+                await sock.sendMessage(sender, { 
+                    video: { url: config.VIDEO_MAP["120m"] }, 
+                    caption: "تفضل هذا فيديو المعاينة." 
+                });
+            }
+        } catch (error) {
+            // الخطأ ده مش هيظهر للزبون غير لو فشل 3 مرات متتالية!
+            console.error("خطأ نهائي في الاتصال:", error);
+            await sock.sendMessage(sender, { text: "عذراً يا فندم، السيستم فيه تحديث حالياً. هرد على حضرتك في أقرب وقت." });
+        }
+    });
+}
+
+startAgent();
