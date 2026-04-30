@@ -2,7 +2,7 @@ const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = 'llama-3.1-8b-instant'; // نموذج أسرع وحدود أعلى
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
   if (!GROQ_API_KEY) {
