@@ -1,7 +1,7 @@
 var axios = require('axios');
 
 var GROQ_URL        = 'https://api.groq.com/openai/v1/chat/completions';
-var GROQ_TEXT_MODEL = 'llama-3.3-70b-versatile';
+var GROQ_TEXT_MODEL = 'gemma2-9b-it';
 var GROQ_VIS_MODEL  = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 async function getReply(options) {
