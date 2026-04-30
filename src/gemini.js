@@ -1,111 +1,112 @@
-const axios = require('axios');
+var axios = require('axios');
 
-// ═══════════════════════════════════════════════════
-// إعدادات الـ AI Agent
-// ═══════════════════════════════════════════════════
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = 'llama-3.1-8b-instant'; // نموذج خفيف وسريع وحدوده عالية
+var GROQ_URL        = 'https://api.groq.com/openai/v1/chat/completions';
+var GROQ_TEXT_MODEL = 'llama-3.3-70b-versatile';
+var GROQ_VIS_MODEL  = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
-// ═══════════════════════════════════════════════════
-// الدالة الرئيسية (عقل الوكيل)
-// ═══════════════════════════════════════════════════
-async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
-  if (!GROQ_API_KEY) {
-    return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
+async function getReply(options) {
+  var message        = options.message        || '';
+  var imageBase64    = options.imageBase64    || null;
+  var imageMime      = options.imageMime      || 'image/jpeg';
+  var systemPrompt   = options.systemPrompt   || '';
+  var contactContext = options.contactContext  || '';
+  var videos         = options.videos         || [];
+  var history        = options.history        || [];
+
+  var apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    console.error('GROQ_API_KEY missing!');
+    return { reply: 'الخدمة مش متاحة.', videos: [] };
   }
 
-  // تجهيز كتالوج الفيديوهات
-  const videoList = videos.length === 0
-    ? 'لا توجد فيديوهات حالياً.'
-    : videos.map(v => `ID:${v._id} - ${v.title}`).join('\n');
+  var videoList = videos.length === 0
+    ? 'No videos.'
+    : videos.map(function(v) {
+        return 'ID=' + v._id + ' title=' + v.title + ' keywords=' + v.keywords;
+      }).join('\n');
 
-  // بناء تعليمات النظام الكاملة
-  const systemMessage = `${systemPrompt}
+  var systemText = systemPrompt
+    + '\n\nContact info: ' + contactContext
+    + '\n\nVideos:\n' + videoList
+    + '\n\nRULES (never break these):'
+    + '\n1. ALWAYS reply in Egyptian Arabic colloquial dialect. Never use English or formal Arabic.'
+    + '\n2. You are a real human, not AI. Never admit being AI or bot.'
+    + '\n3. Keep replies short and natural like real WhatsApp.'
+    + '\n4. Remember the full conversation and build on it intelligently.'
+    + '\n5. Answer any question thoughtfully.'
+    + '\n6. If you see an image, describe and respond to it in Egyptian Arabic.'
+    + '\n7. NEVER send a message unprompted. Only reply when user sends a message.'
+    + '\n8. Do NOT repeat yourself or use same phrases.'
+    + '\n9. Do NOT start with greetings every single message.'
+    + '\n10. If a video fits the question, write ONLY at the end: [VIDEO:id]'
+    + '\n11. If no video fits, do NOT write VIDEO at all.';
 
-  === معلومات الشخص المتحدث ===
-  ${contactContext}
+  var useVision = !!imageBase64;
+  var model     = useVision ? GROQ_VIS_MODEL : GROQ_TEXT_MODEL;
 
-  === مكتبة الفيديوهات المتاحة ===
-  ${videoList}
+  var messages = [{ role: 'system', content: systemText }];
 
-  === آلية عمل الوكيل ===
-  أنت وكيل عقاري ذكي.
-  - إذا طلب العميل رؤية الشقق أو أرسل صورة، ضع فقط [SEND_ALL_VIDEOS] في بداية ردك.
-  - إذا طلب تفاصيل غير موجودة، ضع [SEND_MANAGER] في بداية ردك.
-  - للتحيات أو الشكر أو أي كلام عام، رُد بشكل طبيعي ومهذب ومختصر بالعامية المصرية.
-  - تذكر دائماً: ردودك قصيرة وطبيعية. لا تكرر نفس الجملة. لا تهلوس.`;
-
-  // رسالة المستخدم (مع الإشارة للصورة لو موجودة)
-  const userMessage = imageUrl
-    ? `[المستخدم أرسل صورة للتو]\n${message}`
-    : message;
-
-  try {
-    // الطلب الوحيد والنهائي
-    const response = await axios.post(GROQ_URL, {
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: systemMessage },
-        { role: 'user', content: userMessage }
-      ],
-      max_tokens: 250,
-      temperature: 0.6
-    }, {
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
+  // تاريخ المحادثة
+  for (var i = 0; i < history.length; i++) {
+    messages.push({
+      role:    history[i].role === 'user' ? 'user' : 'assistant',
+      content: history[i].content
     });
+  }
 
-    let replyText = response.data.choices[0].message.content.trim();
+  // الرسالة الحالية
+  if (useVision) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: 'data:' + imageMime + ';base64,' + imageBase64 } },
+        { type: 'text', text: message || 'describe this image' }
+      ]
+    });
+  } else {
+    messages.push({ role: 'user', content: message });
+  }
 
-    // فك طلبات الأدوات من الرد
-    const shouldSendAllVideos = replyText.includes('[SEND_ALL_VIDEOS]');
-    const shouldSendManager = replyText.includes('[SEND_MANAGER]');
-
-    // تنظيف النص النهائي من أي طلبات أدوات
-    replyText = replyText.replace('[SEND_ALL_VIDEOS]', '').replace('[SEND_MANAGER]', '');
-    replyText = replyText.trim();
-
-    // إذا طلب إرسال المدير
-    if (shouldSendManager) {
-      replyText = replyText || 'معلش، النقطة دي مش واضحة عندي. تقدر تتصل بمديري أ/ محمد فريد على 01111631219.';
-    }
-
-    // تجهيز الفيديوهات المطلوب إرسالها
-    const selectedVideos = shouldSendAllVideos ? [...videos] : [];
-
-    return {
-      reply: replyText || 'تمام، هبعتلك الشقق المتاحة دلوقتي.',
-      videos: selectedVideos
-    };
-
-  } catch (error) {
-    console.error('Groq Error:', error.message);
-    // محاولة استرداد بسيطة بدون أدوات
+  for (var attempt = 0; attempt < 3; attempt++) {
     try {
-      const simpleResponse = await axios.post(GROQ_URL, {
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message }
-        ],
-        max_tokens: 150,
-        temperature: 0.6
-      }, {
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      });
-      return { reply: simpleResponse.data.choices[0].message.content.trim(), videos: [] };
-    } catch (finalError) {
-      return { reply: 'معلش، حصلت مشكلة تقنية بسيطة. ممكن تحاول تاني؟', videos: [] };
+      var resp = await axios.post(
+        GROQ_URL,
+        { model: model, messages: messages, max_tokens: 400, temperature: 0.8, stream: false },
+        {
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+          timeout: 25000
+        }
+      );
+
+      var fullText = '';
+      if (resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message) {
+        fullText = resp.data.choices[0].message.content || '';
+      }
+      fullText = fullText.trim();
+      if (!fullText) return { reply: 'حاول تاني.', videos: [] };
+
+      var videoRegex = /\[VIDEO:([^\]]+)\]/g;
+      var videoIds   = [];
+      var m;
+      while ((m = videoRegex.exec(fullText)) !== null) videoIds.push(m[1].trim());
+
+      var cleanReply     = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
+      var selectedVideos = videoIds
+        .map(function(id) { return videos.find(function(v) { return v._id.toString() === id; }); })
+        .filter(Boolean);
+
+      return { reply: cleanReply, videos: selectedVideos };
+
+    } catch(e) {
+      var st = e.response && e.response.status;
+      console.error('Groq attempt ' + (attempt+1) + ':', st, e.message);
+      if (attempt < 2 && (st === 429 || st === 503 || !st)) {
+        await new Promise(function(r) { setTimeout(r, (attempt+1) * 2000); });
+      } else { break; }
     }
   }
+
+  return { reply: 'في ضغط، ابعت تاني بعد شوية.', videos: [] };
 }
 
-module.exports = { getReply };
+module.exports = { getReply: getReply };
