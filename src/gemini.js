@@ -2,11 +2,10 @@ const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'llama-3.1-8b-instant'; // نموذج أسرع وحدود أعلى
 
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
   if (!GROQ_API_KEY) {
-    console.error('❌ GROQ_API_KEY not set');
     return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
   }
 
@@ -42,7 +41,7 @@ ${message}`;
       {
         model: GROQ_MODEL,
         messages,
-        max_tokens: 700,
+        max_tokens: 500,
         temperature: 0.7
       },
       {
@@ -50,7 +49,7 @@ ${message}`;
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 20000
+        timeout: 15000
       }
     );
 
@@ -68,7 +67,6 @@ ${message}`;
       .map(id => videos.find(v => v._id.toString() === id))
       .filter(Boolean);
 
-    console.log(`✅ Reply generated via Groq (${GROQ_MODEL})`);
     return { reply: cleanReply, videos: selectedVideos };
 
   } catch (error) {
@@ -78,69 +76,6 @@ ${message}`;
       videos: []
     };
   }
-}
-
-module.exports = { getReply };        return extractVideosAndReply(textFullText, videos, TEXT_MODEL);
-
-      } catch (textError) {
-        console.error('❌ Text fallback also failed:', textError.message);
-      }
-    }
-
-    return {
-      reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
-      videos: []
-    };
-  }
-}
-
-// دالة مساعدة لاستخراج الفيديوهات وتنظيف النص
-function extractVideosAndReply(fullText, videos, modelUsed) {
-  const videoRegex = /\[VIDEO:([^\]]+)\]/g;
-  const videoIds = [];
-  let match;
-  while ((match = videoRegex.exec(fullText)) !== null) {
-    videoIds.push(match[1].trim());
-  }
-
-  const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
-  const selectedVideos = videoIds
-    .map(id => videos.find(v => v._id.toString() === id))
-    .filter(Boolean);
-
-  console.log(`✅ Reply generated via ${modelUsed}`);
-  return { reply: cleanReply, videos: selectedVideos };
-}
-
-module.exports = { getReply };
-      } catch (textError) {
-        console.error('❌ Text fallback also failed:', textError.message);
-      }
-    }
-
-    return {
-      reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
-      videos: []
-    };
-  }
-}
-
-// دالة مساعدة لاستخراج الفيديوهات وتنظيف النص
-function extractVideosAndReply(fullText, videos, modelUsed) {
-  const videoRegex = /\[VIDEO:([^\]]+)\]/g;
-  const videoIds = [];
-  let match;
-  while ((match = videoRegex.exec(fullText)) !== null) {
-    videoIds.push(match[1].trim());
-  }
-
-  const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
-  const selectedVideos = videoIds
-    .map(id => videos.find(v => v._id.toString() === id))
-    .filter(Boolean);
-
-  console.log(`✅ Reply generated via ${modelUsed}`);
-  return { reply: cleanReply, videos: selectedVideos };
 }
 
 module.exports = { getReply };
