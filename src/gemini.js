@@ -1,16 +1,21 @@
 const axios = require('axios');
 
 // ═══════════════════════════════════════════════════
-// إعدادات OpenRouter – شغالة وجاهزة
+// إعدادات OpenRouter – آمنة لأن المفتاح في HostingGuru
 // ═══════════════════════════════════════════════════
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = 'sk-or-v1-1e2f84a2c3a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d';
-const MODEL_NAME = 'openai/gpt-4o-mini';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MODEL_NAME = 'openai/gpt-4o-mini'; // قوي ومجاني حالياً
 
 // ═══════════════════════════════════════════════════
 // الدالة الرئيسية
 // ═══════════════════════════════════════════════════
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
+  if (!OPENROUTER_API_KEY) {
+    console.error('❌ OPENROUTER_API_KEY not set');
+    return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
+  }
+
   // تجهيز قائمة الفيديوهات
   const videoList = videos.length === 0
     ? 'No videos available.'
@@ -80,6 +85,7 @@ ${message}`;
       .map(id => videos.find(v => v._id.toString() === id))
       .filter(Boolean);
 
+    console.log(`✅ Reply generated via ${MODEL_NAME}`);
     return { reply: cleanReply, videos: selectedVideos };
 
   } catch (error) {
