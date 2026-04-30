@@ -91,7 +91,6 @@ router.post('/', async (req, res) => {
       }
 
       console.log(`✅ Done processing message from ${from}`);
-
     }
   } catch (err) {
     console.error('Webhook error:', err.message);
