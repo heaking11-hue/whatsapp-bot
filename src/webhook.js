@@ -27,7 +27,7 @@ async function processQueue() {
       console.error('Queue processing error:', err.message);
     }
     // انتظر نص ثانية بين كل رسالة والتانية
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   isProcessing = false;
