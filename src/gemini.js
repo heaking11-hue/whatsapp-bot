@@ -1,27 +1,19 @@
 const axios = require('axios');
 
-// ═══════════════════════════════════════════════════
-// إعدادات OpenRouter – آمنة لأن المفتاح في HostingGuru
-// ═══════════════════════════════════════════════════
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL_NAME = 'openai/gpt-4o-mini'; // قوي ومجاني حالياً
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
-// ═══════════════════════════════════════════════════
-// الدالة الرئيسية
-// ═══════════════════════════════════════════════════
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
-  if (!OPENROUTER_API_KEY) {
-    console.error('❌ OPENROUTER_API_KEY not set');
+  if (!GROQ_API_KEY) {
+    console.error('❌ GROQ_API_KEY not set');
     return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
   }
 
-  // تجهيز قائمة الفيديوهات
   const videoList = videos.length === 0
     ? 'No videos available.'
     : videos.map(v => `ID:${v._id} | Title:${v.title} | Keywords:${v.keywords}`).join('\n');
 
-  // تجميع البرومبت الكامل
   const fullPrompt = `${systemPrompt}
 
 === معلومات الشخص المتحدث ===
@@ -42,34 +34,28 @@ ${videoList}
 === رسالة الشخص ===
 ${message}`;
 
-  // تجهيز الرسالة
   const messages = [{ role: 'user', content: fullPrompt }];
 
   try {
-    // إرسال الطلب إلى OpenRouter
     const response = await axios.post(
-      OPENROUTER_URL,
+      GROQ_URL,
       {
-        model: MODEL_NAME,
+        model: GROQ_MODEL,
         messages,
         max_tokens: 700,
         temperature: 0.7
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://whatsapp-bot-7032.apps.hostingguru.io',
-          'X-Title': 'WhatsApp Bot'
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
         },
-        timeout: 30000
+        timeout: 20000
       }
     );
 
-    // استخراج النص من الرد
     const fullText = response.data.choices[0].message.content.trim();
 
-    // استخراج الفيديوهات المختارة
     const videoRegex = /\[VIDEO:([^\]]+)\]/g;
     const videoIds = [];
     let match;
@@ -77,19 +63,16 @@ ${message}`;
       videoIds.push(match[1].trim());
     }
 
-    // تنظيف النص من إشارات الفيديو
     const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
-    
-    // تجميع الفيديوهات المختارة
     const selectedVideos = videoIds
       .map(id => videos.find(v => v._id.toString() === id))
       .filter(Boolean);
 
-    console.log(`✅ Reply generated via ${MODEL_NAME}`);
+    console.log(`✅ Reply generated via Groq (${GROQ_MODEL})`);
     return { reply: cleanReply, videos: selectedVideos };
 
   } catch (error) {
-    console.error('OpenRouter error:', error.response?.data || error.message);
+    console.error('Groq error:', error.response?.data || error.message);
     return {
       reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
       videos: []
