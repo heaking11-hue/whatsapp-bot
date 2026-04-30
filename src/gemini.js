@@ -41,7 +41,7 @@ ${message}`;
       {
         model: GROQ_MODEL,
         messages,
-        max_tokens: 500,
+        max_tokens: 700,
         temperature: 0.7
       },
       {
@@ -49,7 +49,7 @@ ${message}`;
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 15000
+        timeout: 20000
       }
     );
 
