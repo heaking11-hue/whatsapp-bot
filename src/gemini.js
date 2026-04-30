@@ -2,13 +2,11 @@ const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-
-// نستخدم نموذج Llama Vision اللي بيفهم الصور - مجاني حالياً
-const TEXT_MODEL = 'llama-3.3-70b-versatile'; // للنصوص
-const VISION_MODEL = 'llama-3.2-11b-vision-preview'; // للصور
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
   if (!GROQ_API_KEY) {
+    console.error('❌ GROQ_API_KEY not set');
     return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
   }
 
@@ -36,26 +34,13 @@ ${videoList}
 === رسالة الشخص ===
 ${message}`;
 
-  // تجهيز الرسالة
   const messages = [{ role: 'user', content: fullPrompt }];
-
-  // لو فيه صورة، نضيفها كجزء من المحتوى
-  if (imageUrl) {
-    // بنبعت الصورة كـ image_url جوه نفس الرسالة
-    messages[0].content = [
-      { type: 'text', text: fullPrompt },
-      { type: 'image_url', image_url: { url: imageUrl } }
-    ];
-  }
-
-  // نختار النموذج المناسب (Vision لو فيه صورة، Text لو مفيش)
-  const selectedModel = imageUrl ? VISION_MODEL : TEXT_MODEL;
 
   try {
     const response = await axios.post(
       GROQ_URL,
       {
-        model: selectedModel,
+        model: GROQ_MODEL,
         messages,
         max_tokens: 700,
         temperature: 0.7
@@ -65,13 +50,12 @@ ${message}`;
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 25000
+        timeout: 20000
       }
     );
 
     const fullText = response.data.choices[0].message.content.trim();
 
-    // استخراج الفيديوهات المختارة
     const videoRegex = /\[VIDEO:([^\]]+)\]/g;
     const videoIds = [];
     let match;
@@ -84,27 +68,19 @@ ${message}`;
       .map(id => videos.find(v => v._id.toString() === id))
       .filter(Boolean);
 
-    console.log(`✅ Reply generated via ${selectedModel}`);
+    console.log(`✅ Reply generated via Groq (${GROQ_MODEL})`);
     return { reply: cleanReply, videos: selectedVideos };
 
   } catch (error) {
     console.error('Groq error:', error.response?.data || error.message);
-    
-    // لو نموذج Vision فشل، نجرب النموذج النصي كاحتياطي
-    if (imageUrl) {
-      console.log('⚠️ Vision model failed, trying text-only model...');
-      try {
-        const textOnlyMessages = [{ role: 'user', content: fullPrompt + '\n\n[ملاحظة: العميل أرسل صورة، لكني لم أتمكن من رؤيتها. سأرد على النص فقط.]' }];
-        
-        const textResponse = await axios.post(
-          GROQ_URL,
-          {
-            model: TEXT_MODEL,
-            messages: textOnlyMessages,
-            max_tokens: 700,
-            temperature: 0.7
-          },
-          {
+    return {
+      reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
+      videos: []
+    };
+  }
+}
+
+module.exports = { getReply };          {
             headers: {
               'Authorization': `Bearer ${GROQ_API_KEY}`,
               'Content-Type': 'application/json'
