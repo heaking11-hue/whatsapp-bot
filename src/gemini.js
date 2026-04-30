@@ -2,21 +2,20 @@ const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const MODEL = 'llama-3.3-70b-versatile'; // أقوى نموذج يدعم الأدوات
+const MODEL_NAME = 'llama-3.3-70b-versatile';
 
-// تعريف الأدوات (Tools) المتاحة للبوت
-const tools = [
+const TOOLS = [
   {
     type: "function",
     function: {
       name: "send_all_videos",
-      description: "إرسال جميع الفيديوهات المتاحة في مكتبة الشقق دفعة واحدة. تُستخدم عندما يطلب العميل رؤية الشقق المتاحة أو يرسل صورة.",
+      description: "Use this ONLY when the user explicitly asks to see properties or sends a photo. This will send ALL available video tours.",
       parameters: {
         type: "object",
         properties: {
           message: {
             type: "string",
-            description: "نص مصاحب لإرسال الفيديوهات، مثل: 'الشقق المتاحة في محيط شارع الجامعة'"
+            description: "A short intro message before the videos, like: 'These are all available units around the university street.'"
           }
         },
         required: ["message"]
@@ -27,181 +26,116 @@ const tools = [
     type: "function",
     function: {
       name: "send_manager_contact",
-      description: "إرسال معلومات الاتصال بمدير المكتب. تُستخدم عندما يطلب العميل تفاصيل غير موجودة أو معاينة.",
+      description: "Use this when the user asks for details you don't have or for a physical tour.",
       parameters: {
         type: "object",
         properties: {},
         required: []
       }
     }
-  },
-  {
-    type: "function",
-    function: {
-      name: "reply_naturally",
-      description: "الرد على التحيات أو الشكر أو الدعاء أو أي كلام عام بشكل طبيعي ومهذب من غير استخدام أدوات أخرى.",
-      parameters: {
-        type: "object",
-        properties: {
-          greeting_type: {
-            type: "string",
-            enum: ["salam", "morning", "thanks", "duaa", "goodbye", "other"],
-            description: "نوع التحية أو الموقف"
-          },
-          personal_message: {
-            type: "string",
-            description: "الرد المناسب الذي سيراه العميل"
-          }
-        },
-        required: ["greeting_type", "personal_message"]
-      }
-    }
   }
 ];
 
-// تنفيذ الأدوات محلياً
-function executeTool(toolCall) {
-  const { name, arguments: args } = toolCall.function;
-  const parsedArgs = JSON.parse(args);
-
-  if (name === "send_all_videos") {
-    // سنرجع نصاً يحتوي على إشارات الفيديو، وسيتولى webhook.js الباقي
-    return {
-      role: "tool",
-      content: `لقد طلبت إرسال جميع الفيديوهات المتاحة. سيتم إرسالها الآن. (استخدم [VIDEO:ALL] في ردك للإشارة إلى إرسال جميع الفيديوهات. سيتم استبدالها تلقائياً)`
-    };
-  } else if (name === "send_manager_contact") {
-    return {
-      role: "tool",
-      content: `معلومات المدير: الاسم: أ/ محمد فريد. رقم الهاتف: 01111631219.`
-    };
-  } else if (name === "reply_naturally") {
-    // لا نحتاج لفعل شيء، النموذج سيستخدم الرسالة المرفقة
-    return {
-      role: "tool",
-      content: `تم توليد الرد الطبيعي بنجاح. استخدم الرسالة التي حددتها للعميل.`
-    };
-  }
-  return { role: "tool", content: "" };
-}
-
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
-  if (!GROQ_API_KEY) {
-    return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
-  }
+  let apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
 
-  const videoList = videos.length === 0
-    ? 'No videos available.'
-    : videos.map(v => `ID:${v._id} | Title:${v.title} | Description:${v.description}`).join('\n');
+  const videoCatalog = videos.length > 0 
+    ? videos.map(v => `ID:${v._id} - ${v.title}`).join('\n')
+    : '(لا توجد فيديوهات متاحة حالياً)';
 
-  const fullPrompt = `${systemPrompt}
+  const systemMessage = `${systemPrompt}
+  
+  === معلومات الشخص المتحدث ===
+  ${contactContext} (إذا كان جديداً، ابدأ بالترحيب واسأل عن احتياجه).
 
-=== معلومات الشخص المتحدث ===
-${contactContext}
+  === مكتبة الفيديوهات المتاحة ===
+  ${videoCatalog}
 
-=== مكتبة الفيديوهات المتاحة ===
-${videoList}
+  === قاعدة ذهبية ===
+  مهما حدث، يجب أن ترد باللغة العربية الفصحى أو العامية المصرية. أي رد بأي لغة أخرى ممنوع تماماً.`;
 
-=== رسالة الشخص ===
-${message}
-${imageUrl ? '[صورة مرفقة]' : ''}`;
-
-  // بناء محتوى الرسالة الأولى (قد تحتوي على نص وصورة)
-  const userContent = [];
-  if (imageUrl) {
-    userContent.push({ type: "image_url", image_url: { url: imageUrl } });
-  }
-  userContent.push({ type: "text", text: fullPrompt });
+  const userMessage = imageUrl 
+    ? `[المستخدم أرسل صورة للتو]\n${message}`
+    : message;
 
   const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userContent }
+    { role: "system", content: systemMessage },
+    { role: "user", content: userMessage }
   ];
 
-  try {
-    // الاستدعاء الأول: قد يطلب فيه النموذج استخدام أداة
-    let response = await axios.post(GROQ_URL, {
-      model: MODEL,
-      messages,
-      tools: tools,
-      tool_choice: "auto",
-      max_tokens: 700,
-      temperature: 0.7
-    }, {
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 20000
-    });
+  let loopCount = 0;
+  const MAX_LOOPS = 3; // أمان إضافي
 
-    let aiMessage = response.data.choices[0].message;
-    
-    // إذا طلب النموذج استدعاء أدوات
-    while (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-      // نضيف رد النموذج (الذي يحتوي على tool_calls) إلى المحادثة
-      messages.push(aiMessage);
-      
-      // ننفذ كل أداة طلبها ونجمع النتائج
-      for (const toolCall of aiMessage.tool_calls) {
-        const toolResult = executeTool(toolCall);
-        messages.push(toolResult);
-      }
-      
-      // نعيد الاستدعاء مع نتائج الأدوات ليحصل على الرد النهائي
-      response = await axios.post(GROQ_URL, {
-        model: MODEL,
-        messages,
+  while (loopCount < MAX_LOOPS) {
+    loopCount++;
+    try {
+      const response = await axios.post(GROQ_URL, {
+        model: MODEL_NAME,
+        messages: messages,
+        tools: TOOLS,
+        tool_choice: "auto",
         max_tokens: 700,
         temperature: 0.7
       }, {
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
-        timeout: 20000
+        timeout: 25000
       });
+
+      const assistantMessage = response.data.choices[0].message;
       
-      aiMessage = response.data.choices[0].message;
-    }
-
-    // الرد النهائي من النموذج
-    const finalText = aiMessage.content.trim();
-    
-    // معالجة إشارات الفيديو الخاصة
-    let allVideosIds = [];
-    let cleanReply = finalText;
-    
-    if (finalText.includes('[VIDEO:ALL]')) {
-      // إذا طلب إرسال جميع الفيديوهات
-      allVideosIds = videos.map(v => v._id);
-      cleanReply = finalText.replace('[VIDEO:ALL]', '');
-    } else {
-      // وإلا فاستخرج الإشارات الفردية
-      const videoRegex = /\[VIDEO:([^\]]+)\]/g;
-      let match;
-      while ((match = videoRegex.exec(finalText)) !== null) {
-        allVideosIds.push(match[1].trim());
+      // إذا انتهى الحوار (لا توجد طلبات أدوات)
+      if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        let finalReply = assistantMessage.content || "";
+        
+        // تنظيف الرد النهائي: إزالة أي كلمات إنجليزية طاردة
+        finalReply = finalReply.replace(/\[VIDEO:ALL\]/g, '').trim();
+        if (!finalReply) finalReply = "تمام، هبعتلك الشقق المتاحة دلوقتي.";
+        
+        // إرسال جميع الفيديوهات إذا كان الرد يحتوي على [VIDEO:ALL] (للتوافق)
+        const videoIds = assistantMessage.content?.includes('[VIDEO:ALL]') ? videos.map(v => v._id) : [];
+        const selectedVideos = videoIds.map(id => videos.find(v => v._id.toString() === id.toString())).filter(Boolean);
+        
+        return { reply: finalReply, videos: selectedVideos };
       }
-      cleanReply = finalText.replace(/\[VIDEO:[^\]]+\]/g, '');
+
+      // تنفيذ طلبات الأدوات
+      messages.push(assistantMessage); // إضافة رد النموذج
+      for (const toolCall of assistantMessage.tool_calls) {
+        const toolName = toolCall.function.name;
+        const toolArgs = JSON.parse(toolCall.function.arguments);
+        let toolResult = "";
+
+        if (toolName === "send_all_videos") {
+          // نضيف علامة [VIDEO:ALL] ليعرف webhook.js أنه يجب إرسال جميع الفيديوهات
+          const introMsg = toolArgs.message || "الشقق المتاحة في مكتب الهضبة الوسطى.";
+          toolResult = `[سيتم إرسال جميع الفيديوهات الآن. قل للعميل: "${introMsg}". ثم اكتب [VIDEO:ALL] في ردك التالي.]`;
+        } else if (toolName === "send_manager_contact") {
+          toolResult = `تفضل، أرسل للعميل هذه الرسالة: "للتواصل مع مدير المكتب أ/ محمد فريد على 01111631219. قول له أنك كلمت عبدالله."`;
+        }
+        
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: toolResult });
+      }
+
+    } catch (error) {
+      console.error('Groq API Error:', error.response?.data || error.message);
+      // محاولة أخيرة بدون أدوات
+      try {
+        let simpleMessages = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message }
+        ];
+        let fallbackResponse = await axios.post(GROQ_URL, {
+          model: MODEL_NAME, messages: simpleMessages, max_tokens: 500, temperature: 0.7
+        }, { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 20000 });
+        return { reply: fallbackResponse.data.choices[0].message.content.trim(), videos: [] };
+      } catch (finalError) {
+        return { reply: 'معلش، الدنيا زحمت شوية. ممكن تعيد الرسالة؟', videos: [] };
+      }
     }
-    
-    // تنظيف الرد النهائي
-    cleanReply = cleanReply.trim();
-    
-    // تحويل IDs إلى كائنات فيديو حقيقية
-    const selectedVideos = allVideosIds
-      .map(id => videos.find(v => v._id.toString() === id.toString()))
-      .filter(Boolean);
-
-    return { reply: cleanReply || 'تمام، الشقق المتاحة في محيط شارع الجامعة.', videos: selectedVideos };
-
-  } catch (error) {
-    console.error('Groq Agent error:', error.response?.data || error.message);
-    return {
-      reply: 'آسف، حصل مشكلة تقنية بسيطة. جرب تاني بعد لحظة.',
-      videos: []
-    };
   }
 }
 
