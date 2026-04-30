@@ -86,7 +86,6 @@ router.post('/', async (req, res) => {
         for (const video of selectedVideos) {
           await new Promise(r => setTimeout(r, 1500));
           await sendVideo(from, video.cloudinaryUrl, video.description);
-          console.log(`📹 Video sent: ${video.title}`);
         }
       }
 
@@ -96,7 +95,5 @@ router.post('/', async (req, res) => {
     console.error('Webhook error:', err.message);
   }
 });
-
-module.exports = router;}
 
 module.exports = router;
