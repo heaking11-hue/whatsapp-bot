@@ -13,7 +13,6 @@ const {
 
 const processedMsgIds = new Set();
 
-// ── التحقق من الـ webhook ────────────────────────────────────────
 router.get('/', (req, res) => {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
@@ -25,7 +24,6 @@ router.get('/', (req, res) => {
   res.sendStatus(403);
 });
 
-// ── استقبال الرسائل ──────────────────────────────────────────────
 router.post('/', async (req, res) => {
   res.sendStatus(200);
 
@@ -86,6 +84,7 @@ router.post('/', async (req, res) => {
         for (const video of selectedVideos) {
           await new Promise(r => setTimeout(r, 1500));
           await sendVideo(from, video.cloudinaryUrl, video.description);
+          console.log(`📹 Video sent: ${video.title}`);
         }
       }
 
