@@ -2,11 +2,13 @@ const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+// نماذج Groq
+const TEXT_MODEL = 'llama-3.3-70b-versatile';        // للنصوص
+const VISION_MODEL = 'llama-3.2-11b-vision-preview'; // للصور (يفهم الصور)
 
 async function getReply({ message, imageUrl, systemPrompt, contactContext, videos }) {
   if (!GROQ_API_KEY) {
-    console.error('❌ GROQ_API_KEY not set');
     return { reply: '⚠️ الخدمة غير متاحة حالياً.', videos: [] };
   }
 
@@ -34,13 +36,28 @@ ${videoList}
 === رسالة الشخص ===
 ${message}`;
 
-  const messages = [{ role: 'user', content: fullPrompt }];
+  // تجهيز الرسالة
+  let messages = [{ role: 'user', content: fullPrompt }];
+  let selectedModel = TEXT_MODEL;
+
+  // لو فيه صورة، نضيفها ونسستخدم نموذج Vision
+  if (imageUrl) {
+    console.log('🖼️ Image detected, using Vision model...');
+    selectedModel = VISION_MODEL;
+    messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: fullPrompt },
+        { type: 'image_url', image_url: { url: imageUrl } }
+      ]
+    }];
+  }
 
   try {
     const response = await axios.post(
       GROQ_URL,
       {
-        model: GROQ_MODEL,
+        model: selectedModel,
         messages,
         max_tokens: 700,
         temperature: 0.7
@@ -50,34 +67,73 @@ ${message}`;
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 20000
+        timeout: 25000
       }
     );
 
     const fullText = response.data.choices[0].message.content.trim();
-
-    const videoRegex = /\[VIDEO:([^\]]+)\]/g;
-    const videoIds = [];
-    let match;
-    while ((match = videoRegex.exec(fullText)) !== null) {
-      videoIds.push(match[1].trim());
-    }
-
-    const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
-    const selectedVideos = videoIds
-      .map(id => videos.find(v => v._id.toString() === id))
-      .filter(Boolean);
-
-    console.log(`✅ Reply generated via Groq (${GROQ_MODEL})`);
-    return { reply: cleanReply, videos: selectedVideos };
+    return extractVideosAndReply(fullText, videos, selectedModel);
 
   } catch (error) {
-    console.error('Groq error:', error.response?.data || error.message);
+    console.error(`❌ ${selectedModel} error:`, error.response?.data || error.message);
+
+    // لو نموذج Vision فشل، نجرب النموذج النصي كاحتياطي
+    if (imageUrl) {
+      console.log('⚠️ Vision model failed. Trying text-only fallback...');
+      try {
+        const fallbackMessages = [{
+          role: 'user',
+          content: fullPrompt + '\n\n[ملاحظة: العميل أرسل صورة لكن لم أتمكن من تحليلها تقنياً. سأرد على النص فقط.]'
+        }];
+
+        const textResponse = await axios.post(
+          GROQ_URL,
+          {
+            model: TEXT_MODEL,
+            messages: fallbackMessages,
+            max_tokens: 700,
+            temperature: 0.7
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 20000
+          }
+        );
+
+        const textFullText = textResponse.data.choices[0].message.content.trim();
+        return extractVideosAndReply(textFullText, videos, TEXT_MODEL);
+
+      } catch (textError) {
+        console.error('❌ Text fallback also failed:', textError.message);
+      }
+    }
+
     return {
       reply: 'آسف، في تأخير بسيط. ابعت رسالتك تاني بعد لحظة.',
       videos: []
     };
   }
+}
+
+// دالة مساعدة لاستخراج الفيديوهات وتنظيف النص
+function extractVideosAndReply(fullText, videos, modelUsed) {
+  const videoRegex = /\[VIDEO:([^\]]+)\]/g;
+  const videoIds = [];
+  let match;
+  while ((match = videoRegex.exec(fullText)) !== null) {
+    videoIds.push(match[1].trim());
+  }
+
+  const cleanReply = fullText.replace(/\[VIDEO:[^\]]+\]/g, '').trim();
+  const selectedVideos = videoIds
+    .map(id => videos.find(v => v._id.toString() === id))
+    .filter(Boolean);
+
+  console.log(`✅ Reply generated via ${modelUsed}`);
+  return { reply: cleanReply, videos: selectedVideos };
 }
 
 module.exports = { getReply };
