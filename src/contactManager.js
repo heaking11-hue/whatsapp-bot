@@ -13,7 +13,7 @@ async function getOrCreateContact(phone) {
   return contact;
 }
 
-async function getConversationHistory(phone, limit = 10) {
+async function getConversationHistory(phone, limit = 16) {
   const messages = await Message.find({ phone })
     .sort({ timestamp: -1 })
     .limit(limit)
@@ -32,22 +32,39 @@ function buildContactContext(contact, history) {
   const firstDate = contact.firstContact.toLocaleDateString('ar-EG');
   const lastDate  = contact.lastContact.toLocaleDateString('ar-EG');
 
+  // 1. تحليل الاحتياج من الرسائل السابقة
+  let lastUserRequest = '';
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'user') {
+      lastUserRequest = history[i].content;
+      break;
+    }
+  }
+
+  // 2. توجيه السياق بوضوح للنموذج
   let ctx = '';
   if (isNew) {
     ctx = `[شخص جديد يتواصل للمرة الأولى - رقمه: ${contact.phone}]`;
   } else if (isKnown) {
-    ctx = `[شخص معروف - ${contact.name || contact.phone} - أول تواصل: ${firstDate}]`;
-    if (contact.notes) ctx += ` [ملاحظاتك: ${contact.notes}]`;
+    ctx = `[عميل معروف - ${contact.name || contact.phone} - أول تواصل: ${firstDate}]`;
+    if (contact.notes) ctx += ` [ملاحظات: ${contact.notes}]`;
   } else {
-    ctx = `[تواصل معك من قبل - ${contact.totalMessages} رسالة - آخر تواصل: ${lastDate}]`;
+    ctx = `[عميل متكرر - ${contact.totalMessages} رسالة - آخر تواصل: ${lastDate}]`;
   }
 
+  // 3. إضافة آخر احتياج بوضوح
+  if (lastUserRequest && !isNew) {
+    ctx += `\n\n[آخر طلب من العميل: "${lastUserRequest}"]`;
+  }
+
+  // 4. إضافة المحادثة الأخيرة كمرجع
   if (history.length > 0) {
     const recent = history.slice(-5).map(m =>
-      `${m.role === 'user' ? 'الشخص' : 'أنت'}: ${m.content}`
+      `${m.role === 'user' ? 'العميل' : 'أنت (عبدالله)'}: ${m.content}`
     ).join('\n');
-    ctx += `\n\nآخر محادثة:\n${recent}`;
+    ctx += `\n\n[آخر محادثة للسياق]:\n${recent}`;
   }
+
   return ctx;
 }
 
