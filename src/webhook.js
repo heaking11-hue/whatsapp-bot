@@ -81,19 +81,34 @@ router.post('/', async (req, res) => {
       }
 
       // ──────────────────────────────────────────────
-      // إرسال الفيديوهات
+      // إرسال كل الفيديوهات تلقائياً لو العميل طلبها
       // ──────────────────────────────────────────────
-      if (reply && reply.includes('[SEND_ALL_VIDEOS]')) {
-        // إرسال جميع الفيديوهات مباشرة
-        if (videos.length > 0) {
-          for (const video of videos) {
-            await new Promise(r => setTimeout(r, 1500));
-            await sendVideo(from, video.cloudinaryUrl, video.description);
-            console.log(`📹 Video sent: ${video.title}`);
-          }
+      const requestLower = text.toLowerCase();
+      const askedForVideos = (
+        requestLower.includes('شقه') ||
+        requestLower.includes('شقق') ||
+        requestLower.includes('عايز') ||
+        requestLower.includes('ممكن') ||
+        requestLower.includes('متاح') ||
+        requestLower.includes('عندك') ||
+        requestLower.includes('شوف') ||
+        requestLower.includes('العروض') ||
+        requestLower.includes('فيديوهات') ||
+        msgType === 'image' // لو العميل باعت صورة
+      );
+
+      const shouldSendAll = (
+        askedForVideos ||
+        (reply && reply.includes('[SEND_ALL_VIDEOS]'))
+      );
+
+      if (shouldSendAll && videos.length > 0) {
+        for (const video of videos) {
+          await new Promise(r => setTimeout(r, 1500));
+          await sendVideo(from, video.cloudinaryUrl, video.description);
+          console.log(`📹 Video sent: ${video.title}`);
         }
       } else if (selectedVideos && selectedVideos.length > 0) {
-        // إرسال فيديوهات محددة
         for (const video of selectedVideos) {
           await new Promise(r => setTimeout(r, 1500));
           await sendVideo(from, video.cloudinaryUrl, video.description);
