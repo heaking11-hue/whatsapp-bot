@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة تحكم الإرسال</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="container">
+    <h1>📨 نظام الإرسال عبر واتساب</h1>
+    
+    <div class="section">
+      <h3>📋 قوالب الفيديو</h3>
+      <div id="templateList" class="list"></div>
+      <button onclick="addTemplate()" class="btn-secondary">➕ إضافة قالب فيديو</button>
+    </div>
+
+    <div class="section">
+      <h3>👥 قوائم الأرقام</h3>
+      <div id="contactListPanel" class="list"></div>
+      <button onclick="addContactList()" class="btn-secondary">➕ إضافة قائمة أرقام</button>
+    </div>
+
+    <div class="section">
+      <h3>✉️ إرسال رسالة</h3>
+      <label>اختر قالب فيديو</label>
+      <select id="templateSelect" onchange="applyTemplate(this.value)">
+        <option value="">-- يدوي --</option>
+      </select>
+      
+      <label>رابط الوسائط (اختياري للفيديو/صورة)</label>
+      <input type="text" id="mediaUrl" placeholder="https://res.cloudinary.com/.../video.mp4">
+      
+      <label>الوصف (للوسائط) أو الرسالة النصية</label>
+      <textarea id="messageText" rows="3" placeholder="أدخل النص..."></textarea>
+      
+      <label>اختر قائمة أرقام</label>
+      <select id="contactListSelect" onchange="applyContactList(this.value)">
+        <option value="">-- يدوي --</option>
+      </select>
+      
+      <label>أرقام الهواتف (يدويًا، كل رقم في سطر)</label>
+      <textarea id="phones" rows="4" placeholder="201090267943&#10;201012345678"></textarea>
+      
+      <div class="delay-controls">
+        <label>⏱️ التأخير بين الرسائل (ثواني)</label>
+        <div class="delay-inputs">
+          <input type="number" id="delayMin" value="4" min="1" max="60"> إلى
+          <input type="number" id="delayMax" value="8" min="1" max="60">
+        </div>
+      </div>
+      
+      <button id="sendBtn" onclick="sendMessages()">🚀 إرسال</button>
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+  <script src="dashboard.js"></script>
+</body>
+</html>
