@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
+const fs = require('fs');
 const {
   makeWASocket,
   useMultiFileAuthState,
@@ -21,7 +22,14 @@ let sock;
 let isConnected = false;
 
 async function startBaileys() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  // 🟢 أهم تعديل: استخدام المسار /tmp/ الذي يسمح بالكتابة على HostingGuru
+  const authPath = '/tmp/auth_info_baileys';
+  
+  if (!fs.existsSync(authPath)) {
+    fs.mkdirSync(authPath, { recursive: true });
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(authPath);
   
   sock = makeWASocket({
     auth: {
@@ -48,7 +56,7 @@ async function startBaileys() {
       if (shouldReconnect) {
         setTimeout(startBaileys, 5000);
       } else {
-        console.log('Logged out. Delete auth_info_baileys folder and restart.');
+        console.log('Logged out. Delete /tmp/auth_info_baileys folder and restart.');
         process.exit(1);
       }
     }
@@ -59,7 +67,7 @@ async function startBaileys() {
   // طلب رمز الاقتران تلقائيًا
   if (!isConnected) {
     try {
-      const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER; // رقمك 201090267943
+      const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
       const pairingCode = await sock.requestPairingCode(phoneNumber);
       console.log('📱 Pairing Code:', pairingCode);
       console.log('اذهب إلى WhatsApp > Linked Devices > Link a Device > Enter code manually');
@@ -86,19 +94,16 @@ app.post('/api/send', async (req, res) => {
     try {
       const content = {};
       if (mediaUrl) {
-        // إرسال وسائط (صورة أو فيديو)
         const isVideo = mediaUrl.match(/\.(mp4|mov|avi)/i);
         content[isVideo ? 'video' : 'image'] = { url: mediaUrl };
         if (caption) content.caption = caption;
       } else {
-        // إرسال رسالة نصية فقط
         content.text = message;
       }
       
       await sock.sendMessage(`${cleanPhone}@s.whatsapp.net`, content);
       results.push({ phone: cleanPhone, status: 'sent' });
       
-      // تأخير عشوائي بين الرسائل (بالمللي ثانية)
       const dMin = parseInt(delayMin) || 4000;
       const dMax = parseInt(delayMax) || 8000;
       const wait = Math.floor(Math.random() * (dMax - dMin + 1)) + dMin;
