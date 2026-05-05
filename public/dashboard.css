@@ -1,0 +1,19 @@
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; margin: 0; padding: 20px; }
+.container { max-width: 800px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+h1 { text-align: center; color: #1a1a2e; margin-bottom: 30px; }
+.section { margin-bottom: 30px; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.section h3 { margin-top: 0; }
+label { display: block; margin-top: 15px; margin-bottom: 5px; font-weight: 600; color: #333; }
+input, textarea, select { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+textarea { resize: vertical; min-height: 80px; }
+.btn-secondary { background: #6c757d; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+.btn-secondary:hover { background: #5a6268; }
+button { background: #1a1a2e; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+button:hover { opacity: 0.9; }
+.list { margin-bottom: 10px; }
+.item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+.item button { margin-left: 5px; background: transparent; color: #1a1a2e; border: 1px solid #1a1a2e; padding: 4px 8px; font-size: 12px; }
+.delay-controls { margin-top: 15px; }
+.delay-inputs { display: flex; align-items: center; gap: 10px; }
+.delay-inputs input { width: 80px; }
+.status { margin-top: 15px; padding: 10px; border-radius: 6px; }
