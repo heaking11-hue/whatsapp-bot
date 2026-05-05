@@ -5,10 +5,10 @@ const path = require('path');
 const fs = require('fs');
 const {
   makeWASocket,
-  useMultiFileAuthState,
   delay,
   DisconnectReason,
-  makeCacheableSignalKeyStore
+  makeCacheableSignalKeyStore,
+  useMultiFileAuthState
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -21,12 +21,42 @@ app.use(express.static(path.join(__dirname, 'public')));
 let sock;
 let isConnected = false;
 
+// ========== دالة إنشاء مجلد المصادقة مع إعادة المحاولة ==========
+function ensureAuthFolder(folderPath, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true });
+        console.log(`✅ Auth folder created at: ${folderPath}`);
+      }
+      return true;
+    } catch (err) {
+      console.error(`❌ Attempt ${i + 1} failed to create auth folder: ${err.message}`);
+      if (i < maxRetries - 1) {
+        // تجربة مسار مختلف في المحاولة التالية
+        folderPath = `/tmp/auth_${Date.now()}`;
+      }
+    }
+  }
+  return false;
+}
+
 async function startBaileys() {
-  // 🟢 أهم تعديل: استخدام المسار /tmp/ الذي يسمح بالكتابة على HostingGuru
-  const authPath = '/tmp/auth_info_baileys';
+  // 🟢 استخدام مسار بديل مع إعادة المحاولة
+  let authPath = '/tmp/auth_info_baileys';
+  const created = ensureAuthFolder(authPath);
   
-  if (!fs.existsSync(authPath)) {
-    fs.mkdirSync(authPath, { recursive: true });
+  if (!created) {
+    // آخر محاولة: استخدام مسار في المجلد الحالي
+    authPath = path.join(__dirname, 'auth_info_baileys');
+    if (!fs.existsSync(authPath)) {
+      try {
+        fs.mkdirSync(authPath, { recursive: true });
+      } catch (e) {
+        console.error('Cannot create auth folder anywhere. Exiting...');
+        process.exit(1);
+      }
+    }
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(authPath);
@@ -56,7 +86,7 @@ async function startBaileys() {
       if (shouldReconnect) {
         setTimeout(startBaileys, 5000);
       } else {
-        console.log('Logged out. Delete /tmp/auth_info_baileys folder and restart.');
+        console.log('Logged out. Delete auth folder and restart.');
         process.exit(1);
       }
     }
