@@ -1,66 +1,117 @@
 require('dotenv').config();
-var express    = require('express');
-var mongoose   = require('mongoose');
-var bodyParser = require('body-parser');
-var axios      = require('axios');
+const express = require('express');
+const bodyParser = require('body-parser');
+const path = require('path');
+const {
+  makeWASocket,
+  useMultiFileAuthState,
+  delay,
+  DisconnectReason,
+  makeCacheableSignalKeyStore
+} = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const pino = require('pino');
 
-var app = express();
+const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(function() { console.log('MongoDB connected'); })
-  .catch(function(err) { console.error('MongoDB error:', err.message); });
+let sock;
+let isConnected = false;
 
-app.get('/health', function(req, res) {
-  res.json({
-    status:  'ok',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+async function startBaileys() {
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  
+  sock = makeWASocket({
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino().child({ level: 'silent' })),
+    },
+    printQRInTerminal: false,
+    defaultQueryTimeoutMs: undefined,
+    markOnlineOnConnect: true,
+    connectTimeoutMs: 30000,
+    logger: pino({ level: 'silent' }),
   });
-});
 
-// Test Gemini
-app.get('/test-gemini', async function(req, res) {
-  var geminiKey = process.env.GEMINI_API_KEY;
-  var groqKey   = process.env.GROQ_API_KEY;
-  var result    = { gemini_key: !!geminiKey, groq_key: !!groqKey };
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'open') {
+      console.log('✅ Baileys connected');
+      isConnected = true;
+    }
+    if (connection === 'close') {
+      const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed. Reconnecting...', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(startBaileys, 5000);
+      } else {
+        console.log('Logged out. Delete auth_info_baileys folder and restart.');
+        process.exit(1);
+      }
+    }
+  });
 
-  if (geminiKey) {
+  sock.ev.on('creds.update', saveCreds);
+
+  // طلب رمز الاقتران تلقائيًا
+  if (!isConnected) {
     try {
-      var gr = await axios.post(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + geminiKey,
-        { contents: [{ role: 'user', parts: [{ text: 'say hi in Egyptian Arabic' }] }] },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
-      );
-      result.gemini_status = 'ok';
-      result.gemini_reply  = gr.data.candidates[0].content.parts[0].text;
-    } catch(e) {
-      result.gemini_status = 'error';
-      result.gemini_error  = e.response ? e.response.data : e.message;
+      const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER; // رقمك 201090267943
+      const pairingCode = await sock.requestPairingCode(phoneNumber);
+      console.log('📱 Pairing Code:', pairingCode);
+      console.log('اذهب إلى WhatsApp > Linked Devices > Link a Device > Enter code manually');
+    } catch (e) {
+      console.error('Failed to request pairing code:', e.message);
+    }
+  }
+}
+
+startBaileys();
+
+// ========== واجهة API للإرسال ==========
+app.post('/api/send', async (req, res) => {
+  if (!isConnected) return res.status(503).json({ error: 'Bot not connected yet' });
+
+  const { message, mediaUrl, caption, phones, delayMin, delayMax } = req.body;
+  if (!phones || phones.length === 0) return res.status(400).json({ error: 'Missing phones' });
+  if (!message && !mediaUrl) return res.status(400).json({ error: 'Missing message or mediaUrl' });
+
+  let results = [];
+  for (const phone of phones) {
+    const cleanPhone = phone.toString().replace(/[^0-9]/g, '');
+    if (!cleanPhone) continue;
+    try {
+      const content = {};
+      if (mediaUrl) {
+        // إرسال وسائط (صورة أو فيديو)
+        const isVideo = mediaUrl.match(/\.(mp4|mov|avi)/i);
+        content[isVideo ? 'video' : 'image'] = { url: mediaUrl };
+        if (caption) content.caption = caption;
+      } else {
+        // إرسال رسالة نصية فقط
+        content.text = message;
+      }
+      
+      await sock.sendMessage(`${cleanPhone}@s.whatsapp.net`, content);
+      results.push({ phone: cleanPhone, status: 'sent' });
+      
+      // تأخير عشوائي بين الرسائل (بالمللي ثانية)
+      const dMin = parseInt(delayMin) || 4000;
+      const dMax = parseInt(delayMax) || 8000;
+      const wait = Math.floor(Math.random() * (dMax - dMin + 1)) + dMin;
+      await delay(wait);
+      
+    } catch (e) {
+      results.push({ phone: cleanPhone, status: 'failed', error: e.message });
+      await delay(2000);
     }
   }
 
-  if (groqKey) {
-    try {
-      var gr2 = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        { model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: 'say hi in Egyptian Arabic' }], max_tokens: 50 },
-        { headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey }, timeout: 15000 }
-      );
-      result.groq_status = 'ok';
-      result.groq_reply  = gr2.data.choices[0].message.content;
-    } catch(e) {
-      result.groq_status = 'error';
-      result.groq_error  = e.response ? e.response.data : e.message;
-    }
-  }
-
-  res.json(result);
+  res.json({ success: true, results });
 });
 
-app.use('/webhook',   require('./src/webhook'));
-app.use('/dashboard', require('./src/dashboard'));
-app.get('/', function(req, res) { res.redirect('/dashboard'); });
-
-var PORT = process.env.PORT || 8000;
-app.listen(PORT, function() { console.log('Server on port ' + PORT); });
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
